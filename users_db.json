@@ -66,7 +66,7 @@
         "clock_active": false,
         "nick_clock": true,
         "bio_clock": true,
-        "online_mode": true,
+        "online_mode": false,
         "referrals_count": 0,
         "bio_type": "tugilgan_kun",
         "birthday_date": "12-03",
