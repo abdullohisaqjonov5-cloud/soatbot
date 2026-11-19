@@ -543,8 +543,6 @@ def get_hijri_qurbon_hayiti(year):
 BIO_PLANS = ["Standard", "Plus", "Premium"]
 BIO_PLANS_TEXT = "Standard ⏰, Plus ✨ va Premium ⭐️"
 
-TASHKENT_LAT, TASHKENT_LNG = 41.2995, 69.2401
-PRAYER_NAMES = {"bomdod": "Bomdod", "peshin": "Peshin", "asr": "Asr", "shom": "Shom", "xufton": "Xufton"}
 
 
 def fmt_dur(seconds):
@@ -578,10 +576,41 @@ def countdown_line(emoji, title, month, day, now_dt, today_text, show_wday=True)
     return f"{emoji} {title} {left} qoldi{wd}"
 
 
-# ---------- Namoz vaqtlari (Toshkent) ----------
-def calc_prayer_local(d):
-    """Internet bo'lmasa ishlatiladigan zaxira hisob (astronomik formula). Taxminiy: ±10 daqiqa."""
+# ---------- Namoz vaqtlari (shaharlar bo'yicha) ----------
+# key: (ko'rsatiladigan nom, kenglik, uzunlik, praytime.uz region_id, namoz-vaqti.uz slug variantlari)
+NAMOZ_CITIES = {
+    "toshkent":  ("Toshkent",  41.2995, 69.2401, 1,   ["toshkent-shahri", "toshkent"]),
+    "fargona":   ("Farg'ona",  40.3842, 71.7843, 77,  ["fargona-shahri", "fargona"]),
+    "qoqon":     ("Qo'qon",    40.5286, 70.9425, 78,  ["qoqon-shahri", "qoqon"]),
+    "namangan":  ("Namangan",  40.9983, 71.6726, 149, ["namangan-shahri", "namangan"]),
+    "andijon":   ("Andijon",   40.7821, 72.3442, 17,  ["andijon-shahri", "andijon"]),
+    "samarqand": ("Samarqand", 39.6542, 66.9597, 47,  ["samarqand-shahri", "samarqand"]),
+    "buxoro":    ("Buxoro",    39.7747, 64.4286, 34,  ["buxoro-shahri", "buxoro"]),
+    "navoiy":    ("Navoiy",    40.0844, 65.3792, 136, ["navoiy-shahri", "navoiy"]),
+    "jizzax":    ("Jizzax",    40.1158, 67.8422, 107, ["jizzax-shahri", "jizzax"]),
+    "guliston":  ("Guliston",  40.4897, 68.7842, 67,  ["guliston-shahri", "guliston"]),
+    "qarshi":    ("Qarshi",    38.8606, 65.7891, 121, ["qarshi-shahri", "qarshi"]),
+    "termiz":    ("Termiz",    37.2242, 67.2783, 162, ["termiz-shahri", "termiz"]),
+    "urganch":   ("Urganch",   41.5500, 60.6333, 96,  ["urganch-shahri", "urganch"]),
+    "nukus":     ("Nukus",     42.4531, 59.6103, 176, ["nukus-shahri", "nukus"]),
+}
+DEFAULT_CITY = "toshkent"
+PRAYER_NAMES = {"bomdod": "Bomdod", "peshin": "Peshin", "asr": "Asr", "shom": "Shom", "xufton": "Xufton"}
+
+
+def city_of(u_data):
+    c = (u_data or {}).get("prayer_city", DEFAULT_CITY)
+    return c if c in NAMOZ_CITIES else DEFAULT_CITY
+
+
+def city_name(key):
+    return NAMOZ_CITIES.get(key, NAMOZ_CITIES[DEFAULT_CITY])[0]
+
+
+def calc_prayer_local(d, city=DEFAULT_CITY):
+    """Internet bo'lmasa ishlatiladigan zaxira hisob (astronomik formula). Taxminiy: bir necha daqiqa xato."""
     import math
+    _, lat, lng, _, _ = NAMOZ_CITIES.get(city, NAMOZ_CITIES[DEFAULT_CITY])
     tz = 5
     y, m, dd = d.year, d.month, d.day
     if m <= 2:
@@ -589,7 +618,7 @@ def calc_prayer_local(d):
         m += 12
     A = y // 100
     jd = int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + dd + (2 - A + A // 4) - 1524.5
-    jd -= TASHKENT_LNG / (15 * 24.0)
+    jd -= lng / (15 * 24.0)
     D = jd + 0.5 - 2451545.0
     g = math.radians((357.529 + 0.98560028 * D) % 360)
     q = (280.459 + 0.98564736 * D) % 360
@@ -602,8 +631,8 @@ def calc_prayer_local(d):
         eqt -= 24
     while eqt < -12:
         eqt += 24
-    la = math.radians(TASHKENT_LAT)
-    noon = 12 + tz - TASHKENT_LNG / 15.0 - eqt
+    la = math.radians(lat)
+    noon = 12 + tz - lng / 15.0 - eqt
 
     def hour_angle(sin_alt):
         x = (sin_alt - math.sin(decl) * math.sin(la)) / (math.cos(decl) * math.cos(la))
@@ -623,8 +652,8 @@ def calc_prayer_local(d):
 
 
 PRAYER_FILE = "prayer_cache.json"
-PRAYER_CACHE = {}          # sana -> {"bomdod": datetime, ...}  (faqat RASMIY manbalardan)
-PRAYER_SOURCE = {}         # sana -> manba nomi
+PRAYER_CACHE = {}          # shahar -> {sana -> {"bomdod": datetime, ...}}  (faqat RASMIY manbalardan)
+PRAYER_SOURCE = {}         # shahar -> {sana -> manba nomi}
 PRAYER_KEYS = ["bomdod", "quyosh", "peshin", "asr", "shom", "xufton"]
 UZ_MONTHS = {"yanvar": 1, "fevral": 2, "mart": 3, "aprel": 4, "may": 5, "iyun": 6,
              "iyul": 7, "avgust": 8, "sentabr": 9, "oktabr": 10, "noyabr": 11, "dekabr": 12}
@@ -632,6 +661,10 @@ PRAYER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     "Accept": "application/json, text/html;q=0.9,*/*;q=0.8",
 }
+
+
+def _norm(s):
+    return re.sub(r"[^a-z]", "", (s or "").lower())
 
 
 def _hhmm_to_dt(d, s):
@@ -645,7 +678,7 @@ def _times_from_strings(d, t):
     return {k: _hhmm_to_dt(d, t[k]) for k in PRAYER_KEYS}
 
 
-def _valid_day(times, d):
+def _valid_day(times, d, city=DEFAULT_CITY):
     """Vaqtlar tartibli va hisob-kitobdan 25 daqiqadan ortiq farq qilmasligini tekshiradi (xato ma'lumotni rad etadi)."""
     try:
         seq = [times[k] for k in PRAYER_KEYS]
@@ -653,7 +686,7 @@ def _valid_day(times, d):
         return False
     if any(seq[i] >= seq[i + 1] for i in range(len(seq) - 1)):
         return False
-    ref = calc_prayer_local(d)
+    ref = calc_prayer_local(d, city)
     return all(abs((times[k] - ref[k]).total_seconds()) <= 25 * 60 for k in PRAYER_KEYS)
 
 
@@ -666,31 +699,41 @@ async def _http_get(session, url, as_json=False):
         return await r.text()
 
 
-def _parse_month_json(data):
-    """namoz-vaqti.uz JSON (O'zbekiston Musulmonlari idorasi / Din ishlari qo'mitasi ma'lumotlari)."""
+def _parse_month_json(data, city=DEFAULT_CITY):
+    """namoz-vaqti.uz JSON (Musulmonlar idorasi / Din ishlari qo'mitasi ma'lumotlari). Shahar nomi tekshiriladi."""
+    try:
+        reg = data["meta"]["region"]
+        label = _norm(f"{reg.get('name', '')}{reg.get('slug', '')}")
+        if label and _norm(city_name(city)) not in label:
+            return {}          # boshqa shahar ma'lumoti keldi - rad etamiz
+    except Exception:
+        pass
     days = {}
     for row in (data.get("period_table") or []):
         try:
             dd, mm, yy = row["date"].split(".")
             d = date(int(yy), int(mm), int(dd))
             t = _times_from_strings(d, row["times"])
-            if _valid_day(t, d):
+            if _valid_day(t, d, city):
                 days[d] = t
         except Exception:
             continue
-    try:   # "today" bo'limi ham bor
+    try:
         y, m, dd = data["meta"]["date"].split("-")
         d = date(int(y), int(m), int(dd))
         t = _times_from_strings(d, data["today"]["times"])
-        if _valid_day(t, d):
+        if _valid_day(t, d, city):
             days.setdefault(d, t)
     except Exception:
         pass
     return days
 
 
-def _parse_month_html(text):
+def _parse_month_html(text, city=DEFAULT_CITY):
     """Oylik jadval HTML sahifasi (zaxira usul): 'DD.MM.YYYY | 05:52 | 07:15 | ...' qatorlari."""
+    tm = re.search(r"<title>(.*?)</title>", text, re.S | re.I)
+    if tm and _norm(city_name(city)) not in _norm(tm.group(1)):
+        return {}
     plain = re.sub(r"<[^>]+>", " ", text)
     days = {}
     for m in re.finditer(r"(\d{2})\.(\d{2})\.(\d{4})((?:\s*\|?\s*\d{1,2}:\d{2}){6})", plain):
@@ -698,54 +741,54 @@ def _parse_month_html(text):
             d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
             hh = re.findall(r"\d{1,2}:\d{2}", m.group(4))
             t = _times_from_strings(d, dict(zip(PRAYER_KEYS, hh)))
-            if _valid_day(t, d):
+            if _valid_day(t, d, city):
                 days[d] = t
         except Exception:
             continue
     return days
 
 
-async def _fetch_month(session, y, mth):
+async def _fetch_month(session, city, y, mth):
     ym = f"{y}-{mth:02d}"
-    # 1) JSON API
-    try:
-        data = await _http_get(
-            session, f"https://namoz-vaqti.uz/index.php?format=json&lang=en&period={ym}&region=toshkent-shahri", True)
-        days = _parse_month_json(data)
-        if days:
-            return days
-    except Exception as e:
-        print("namoz-vaqti.uz (JSON) xatosi:", e)
-    # 2) o'sha saytning HTML jadvali
-    try:
-        html = await _http_get(session, f"https://namoz-vaqti.uz/en/namoz-vaqtlari/toshkent-shahri/oylik/{ym}")
-        days = _parse_month_html(html)
-        if days:
-            return days
-    except Exception as e:
-        print("namoz-vaqti.uz (HTML) xatosi:", e)
+    slugs = NAMOZ_CITIES[city][4]
+    for slug in slugs:          # 1) JSON API
+        try:
+            data = await _http_get(
+                session, f"https://namoz-vaqti.uz/index.php?format=json&lang=en&period={ym}&region={slug}", True)
+            days = _parse_month_json(data, city)
+            if days:
+                return days
+        except Exception as e:
+            print(f"namoz-vaqti.uz JSON xatosi ({slug}):", e)
+    for slug in slugs:          # 2) shu saytning HTML jadvali
+        try:
+            html = await _http_get(session, f"https://namoz-vaqti.uz/en/namoz-vaqtlari/{slug}/oylik/{ym}")
+            days = _parse_month_html(html, city)
+            if days:
+                return days
+        except Exception as e:
+            print(f"namoz-vaqti.uz HTML xatosi ({slug}):", e)
     return {}
 
 
-async def _fetch_praytime_today(session, today):
+async def _fetch_praytime_today(session, city, today):
     """praytime.uz (Muftiyat taqvimi) - faqat bugun uchun zaxira manba."""
     try:
-        html = await _http_get(session, "https://praytime.uz/?region_id=1&lng=uz")
+        rid = NAMOZ_CITIES[city][3]
+        html = await _http_get(session, f"https://praytime.uz/?region_id={rid}&lng=uz")
         plain = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
         plain = re.sub(r"<[^>]+>", " ", plain)
         dm = re.search(r"(\d{1,2})-(" + "|".join(UZ_MONTHS) + ")", plain, re.I)
         if not dm or int(dm.group(1)) != today.day or UZ_MONTHS[dm.group(2).lower()] != today.month:
             print("praytime.uz: sahifa sanasi bugungi sanaga mos emas")
             return {}
-        tail = plain[dm.end():]
-        times = re.findall(r"(?<![\d:])(\d{2}:\d{2})(?![\d:])", tail)
+        times = re.findall(r"(?<![\d:])(\d{2}:\d{2})(?![\d:])", plain[dm.end():])
         if len(times) < 7:
             return {}
-        # tartib: Tong, Quyosh, Zuho, Peshin, Asr, Shom, Xufton
         t = {"bomdod": times[0], "quyosh": times[1], "peshin": times[3],
              "asr": times[4], "shom": times[5], "xufton": times[6]}
         parsed = _times_from_strings(today, t)
-        return {today: parsed} if _valid_day(parsed, today) else {}
+        return {today: parsed} if _valid_day(parsed, today, city) else {}
     except Exception as e:
         print("praytime.uz xatosi:", e)
         return {}
@@ -754,8 +797,10 @@ async def _fetch_praytime_today(session, today):
 def _save_prayer_cache():
     try:
         today = datetime.now(TASHKENT_TZ).date()
-        out = {d.isoformat(): {k: v[k].strftime("%H:%M") for k in PRAYER_KEYS}
-               for d, v in PRAYER_CACHE.items() if d >= today - timedelta(days=3)}
+        out = {}
+        for city, days in PRAYER_CACHE.items():
+            out[city] = {d.isoformat(): {k: v[k].strftime("%H:%M") for k in PRAYER_KEYS}
+                         for d, v in days.items() if d >= today - timedelta(days=3)}
         with open(PRAYER_FILE, "w", encoding="utf-8") as f:
             json.dump(out, f)
     except Exception as e:
@@ -769,50 +814,70 @@ def _load_prayer_cache():
             return
         with open(PRAYER_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        for k, v in raw.items():
-            d = date.fromisoformat(k)
-            t = _times_from_strings(d, v)
-            if _valid_day(t, d):
-                PRAYER_CACHE[d] = t
-                PRAYER_SOURCE.setdefault(d, "kesh")
+        for city, days in raw.items():
+            if city not in NAMOZ_CITIES:
+                continue
+            for k, v in days.items():
+                d = date.fromisoformat(k)
+                t = _times_from_strings(d, v)
+                if _valid_day(t, d, city):
+                    PRAYER_CACHE.setdefault(city, {})[d] = t
+                    PRAYER_SOURCE.setdefault(city, {}).setdefault(d, "kesh")
     except Exception as e:
         print("Namoz keshini o'qishda xato:", e)
 
 
-def prayer_data_ok():
+def used_prayer_cities():
+    """Foydalanuvchilar tanlagan shaharlar (+ Toshkent har doim)."""
+    cities = {DEFAULT_CITY}
+    try:
+        for u in list(db.values()):
+            if isinstance(u, dict) and u.get("bio_type") == "namoz":
+                cities.add(city_of(u))
+    except Exception:
+        pass
+    return cities
+
+
+def prayer_data_ok(cities=None):
     """Bugun va ertaga uchun rasmiy (yangi) ma'lumot bormi?"""
     today = datetime.now(TASHKENT_TZ).date()
-    return all(PRAYER_SOURCE.get(d) in ("namoz-vaqti.uz", "praytime.uz")
-               for d in (today, today + timedelta(days=1)))
+    for c in (cities or used_prayer_cities()):
+        src = PRAYER_SOURCE.get(c, {})
+        if not all(src.get(d) in ("namoz-vaqti.uz", "praytime.uz") for d in (today, today + timedelta(days=1))):
+            return False
+    return True
 
 
-async def refresh_prayer_cache():
-    """Rasmiy manbalardan Toshkent vaqtlarini yangilaydi. Vaqtlar o'zgargan bo'lsa, eskisi ustiga yoziladi."""
+async def refresh_prayer_cache(cities=None):
+    """Rasmiy manbalardan vaqtlarni yangilaydi. Vaqtlar o'zgargan bo'lsa, eskisi ustiga yoziladi."""
     today = datetime.now(TASHKENT_TZ).date()
     months = sorted({(d.year, d.month) for d in (today - timedelta(days=1), today, today + timedelta(days=1))})
     changed = False
     async with aiohttp.ClientSession(headers=PRAYER_HEADERS) as session:
-        for (y, mth) in months:
-            days = await _fetch_month(session, y, mth)
-            for d, t in days.items():
-                if PRAYER_CACHE.get(d) != t:
-                    changed = True
-                PRAYER_CACHE[d] = t
-                PRAYER_SOURCE[d] = "namoz-vaqti.uz"
-        if PRAYER_SOURCE.get(today) != "namoz-vaqti.uz":
-            days = await _fetch_praytime_today(session, today)
-            for d, t in days.items():
-                if PRAYER_CACHE.get(d) != t:
-                    changed = True
-                PRAYER_CACHE[d] = t
-                PRAYER_SOURCE[d] = "praytime.uz"
-    for d in list(PRAYER_CACHE):
-        if d < today - timedelta(days=3):
-            PRAYER_CACHE.pop(d, None)
-            PRAYER_SOURCE.pop(d, None)
+        for city in (cities or used_prayer_cities()):
+            cache = PRAYER_CACHE.setdefault(city, {})
+            srcs = PRAYER_SOURCE.setdefault(city, {})
+            for (y, mth) in months:
+                days = await _fetch_month(session, city, y, mth)
+                for d, t in days.items():
+                    if cache.get(d) != t:
+                        changed = True
+                    cache[d] = t
+                    srcs[d] = "namoz-vaqti.uz"
+            if srcs.get(today) != "namoz-vaqti.uz":
+                for d, t in (await _fetch_praytime_today(session, city, today)).items():
+                    if cache.get(d) != t:
+                        changed = True
+                    cache[d] = t
+                    srcs[d] = "praytime.uz"
+            for d in list(cache):
+                if d < today - timedelta(days=3):
+                    cache.pop(d, None)
+                    srcs.pop(d, None)
+            print(f"Namoz vaqtlari ({city_name(city)}): manba = {srcs.get(today, 'hisob')}")
     if changed:
         _save_prayer_cache()
-        print("Namoz vaqtlari yangilandi:", PRAYER_SOURCE.get(today))
 
 
 async def prayer_refresh_loop():
@@ -826,29 +891,30 @@ async def prayer_refresh_loop():
         await asyncio.sleep(600 if not prayer_data_ok() else 7200)
 
 
-def get_prayer_times(d):
+def get_prayer_times(d, city=DEFAULT_CITY):
     """Rasmiy vaqt bo'lsa — o'sha. Bo'lmasa: eng yaqin rasmiy kunning farqi (siljishi) bilan to'g'rilangan hisob."""
-    if d in PRAYER_CACHE:
-        return PRAYER_CACHE[d]
-    local = calc_prayer_local(d)
-    if PRAYER_CACHE:
-        ref_d = min(PRAYER_CACHE, key=lambda x: abs((x - d).days))
+    cache = PRAYER_CACHE.get(city) or {}
+    if d in cache:
+        return cache[d]
+    local = calc_prayer_local(d, city)
+    if cache:
+        ref_d = min(cache, key=lambda x: abs((x - d).days))
         if abs((ref_d - d).days) <= 45:
-            ref_local = calc_prayer_local(ref_d)
-            ref_off = {k: PRAYER_CACHE[ref_d][k] - ref_local[k] for k in PRAYER_KEYS}
-            return {k: local[k] + ref_off[k] for k in PRAYER_KEYS}
+            ref_local = calc_prayer_local(ref_d, city)
+            off = {k: cache[ref_d][k] - ref_local[k] for k in PRAYER_KEYS}
+            return {k: local[k] + off[k] for k in PRAYER_KEYS}
     return local
 
 
-def prayer_line(now_dt):
+def prayer_line(now_dt, city=DEFAULT_CITY):
     """Hozirgi namoz: qachon kirdi/qachon chiqadi va necha soat-daqiqa qolgani. Chiqqach keyingisigacha."""
     now_m = _minute_floor(now_dt)
     today = now_m.date()
     windows = []
     for off in (-1, 0, 1):
         d = today + timedelta(days=off)
-        t = get_prayer_times(d)
-        nxt = get_prayer_times(d + timedelta(days=1))
+        t = get_prayer_times(d, city)
+        nxt = get_prayer_times(d + timedelta(days=1), city)
         windows += [
             ("bomdod", t["bomdod"], t["quyosh"]),
             ("peshin", t["peshin"], t["asr"]),
@@ -900,7 +966,7 @@ def build_bio_extra(u_data, now_dt, now_str):
     elif b_type == "sakkiz_mart":
         extra.append(countdown_line("🌷", "8-martga", 3, 8, now_dt, "🌷 Bugun 8-mart bayrami!"))
     elif b_type == "namoz":
-        extra.append(prayer_line(now_dt))
+        extra.append(prayer_line(now_dt, city_of(u_data)))
     elif b_type == "qurbon_hayiti":
         qh_dt, namoz_time = get_hijri_qurbon_hayiti(now_dt.year)
         if qh_dt.date() < now_dt.date():
@@ -3439,6 +3505,8 @@ async def set_bio_menu_cb(call: types.CallbackQuery):
         "qurbon_hayiti": "Qurbon hayiti & Namoz vaqti"
     }
     bio_type_text = type_names.get(b_type, "Oddiy bio soat")
+    if b_type == "namoz":
+        bio_type_text = f"Namoz vaqtlari ({city_name(city_of(u_data))})"
     
     toggle_text = "Bioni o'chirish" if bio_active else "Bioni yoqish"
     toggle_cb = "toggle_bio_off" if bio_active else "toggle_bio_on"
@@ -3463,6 +3531,9 @@ async def set_bio_menu_cb(call: types.CallbackQuery):
         ]
     )
     
+    if b_type == "namoz":
+        kb.inline_keyboard.insert(2, [InlineKeyboardButton(text="🏙 Shaharni o'zgartirish", callback_data="namoz_city_menu")])
+
     info_note = ""
     if u_data.get("plan") not in BIO_PLANS:
         info_note = f"\n\nℹ️ Biodagi soat funksiyasi faqat {BIO_PLANS_TEXT} tariflarida ishlaydi."
@@ -3556,8 +3627,78 @@ async def set_btype_callback(call: types.CallbackQuery, state: FSMContext):
         )
         return
 
+    if btype == "namoz":
+        await call.answer("Bio tipi o'zgartirildi!")
+        await show_namoz_city_menu(call)
+        return
+
     await call.answer("Bio tipi o'zgartirildi!")
     await choose_bio_type_menu_cb(call)
+
+
+def namoz_city_kb(cur):
+    rows, row = [], []
+    for key, val in NAMOZ_CITIES.items():
+        row.append(InlineKeyboardButton(
+            text=("✅ " if key == cur else "") + val[0], callback_data=f"namoz_city_{key}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="set_bio_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def show_namoz_city_menu(call: types.CallbackQuery):
+    u_data = get_user_data(call.from_user.id)
+    cur = city_of(u_data)
+    await call.message.edit_text(
+        "🕌 <b>Namoz vaqtlari</b>\n\n"
+        "Shaharingizni tanlang — bio'ngizda shu shahar bo'yicha namoz vaqtlari chiqadi: "
+        "hozirgi namoz qachon kirgan/qachon chiqishi va qancha vaqt qolgani. "
+        "Vaqtlar O'zbekiston Musulmonlari idorasi taqvimidan olinadi va avtomatik yangilanib turadi.\n\n"
+        f"📍 Hozirgi shahar: <b>{city_name(cur)}</b>",
+        reply_markup=namoz_city_kb(cur),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data == "namoz_city_menu")
+async def namoz_city_menu_cb(call: types.CallbackQuery):
+    u_data = get_user_data(call.from_user.id)
+    if u_data.get("plan") not in BIO_PLANS:
+        await call.answer(f"❌ Bio tiplarini o'zgartirish {BIO_PLANS_TEXT} tariflarida mavjud!", show_alert=True)
+        return
+    await show_namoz_city_menu(call)
+
+
+async def _after_city_change(user_id, city):
+    try:
+        await refresh_prayer_cache([city])      # tanlangan shahar vaqtlarini darhol olamiz
+    except Exception as e:
+        print("Shahar vaqtlarini olishda xato:", e)
+    await apply_business_clock_now(user_id)     # bioga darhol yozamiz
+
+
+@dp.callback_query(F.data.startswith("namoz_city_"))
+async def namoz_city_pick_cb(call: types.CallbackQuery):
+    key = call.data.replace("namoz_city_", "", 1)
+    if key == "menu":
+        return
+    if key not in NAMOZ_CITIES:
+        await call.answer("❌ Shahar topilmadi", show_alert=True)
+        return
+    u_data = get_user_data(call.from_user.id)
+    if u_data.get("plan") not in BIO_PLANS:
+        await call.answer(f"❌ Bio tiplarini o'zgartirish {BIO_PLANS_TEXT} tariflarida mavjud!", show_alert=True)
+        return
+    u_data["prayer_city"] = key
+    u_data["bio_type"] = "namoz"
+    save_db(db)
+    asyncio.create_task(_after_city_change(call.from_user.id, key))
+    await call.answer(f"✅ {city_name(key)} tanlandi")
+    await show_namoz_city_menu(call)
 
 
 @dp.message(ClockSetup.waiting_for_birthday)
