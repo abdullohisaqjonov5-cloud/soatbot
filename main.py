@@ -84,6 +84,8 @@ dp = Dispatcher(storage=MemoryStorage())
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "isaqjonovabdulloh59-svg/REPO_NOMI")
+# To'liq havola (https://github.com/user/repo) yoki ".git" yozilgan bo'lsa ham, "user/repo" ko'rinishiga keltiriladi
+GITHUB_REPO = re.sub(r"^(https?://)?(www\.)?github\.com/", "", GITHUB_REPO.strip()).strip("/").removesuffix(".git")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 
 DB_FILE = "users_db.json"
@@ -254,10 +256,12 @@ async def push_to_github():
             now = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
             async with aiohttp.ClientSession() as session:
                 remote = await fetch_remote_db(session)          # userbot yozgan o'zgarishlarni yo'qotmaslik uchun
-                if remote is not None:
-                    banned = merge_remote(remote)
-                    if banned:
-                        await kick_banned(banned)
+                if remote is None:
+                    logging.error("GitHub bazasini o'qib bo'lmadi — zaxira eski nusxa ustiga yozilmaydi (keyingi urinishda qayta uriniladi)")
+                    return
+                banned = merge_remote(remote)
+                if banned:
+                    await kick_banned(banned)
                 users_bytes = json.dumps(db, ensure_ascii=False, indent=4).encode("utf-8")
                 promos_bytes = json.dumps(promos_db, ensure_ascii=False, indent=4).encode("utf-8")
                 await _github_put_file(session, "users_db.json", users_bytes, f"Auto backup {now} [skip render] [skip ci]")
@@ -275,7 +279,11 @@ async def fetch_remote_db(session):
     headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github.raw+json"}
     try:
         async with session.get(url, headers=headers, params={"ref": GITHUB_BRANCH}) as r:
+            if r.status == 404:
+                logging.error(f"GitHub: users_db.json topilmadi yoki repo/token noto'g'ri (404). GITHUB_REPO={GITHUB_REPO}")
+                return {}
             if r.status != 200:
+                logging.error(f"GitHub baza o'qilmadi: HTTP {r.status}")
                 return None
             data = json.loads(await r.text())
             return data if isinstance(data, dict) else None
@@ -4546,6 +4554,12 @@ async def bootstrap_from_github():
             cur = db.get(uid)
             if cur is None:
                 db[uid] = copy.deepcopy(r)
+                changed = True
+                continue
+            cur_fresh = (cur.get("plan", "Free") == "Free" and not cur.get("balance")
+                         and not cur.get("tg_session") and not cur.get("biz_connection_id"))
+            if cur_fresh and (r.get("plan", "Free") != "Free" or r.get("balance")):
+                db[uid] = copy.deepcopy(r)       # baza yo'qolgandan keyin qayta yaratilgan bo'sh yozuvni tiklaymiz
                 changed = True
                 continue
             for k in ("tg_session", "clock_active", "biz_connection_id", "biz_can_name", "biz_can_bio", "biz_can_msg", "biz_can_read"):
