@@ -60,8 +60,8 @@
         "font_style": "Bold"
     },
     "8488328091": {
-        "balance": 110000,
-        "plan": "Free",
+        "balance": 97000,
+        "plan": "Premium",
         "joined_date": "2026-09-07 14:29:20",
         "clock_active": false,
         "nick_clock": true,
@@ -70,7 +70,7 @@
         "referrals_count": 0,
         "bio_type": "tugilgan_kun",
         "birthday_date": "12-03",
-        "plan_expire": "Mavjud emas",
+        "plan_expire": "2026-12-19 18:29:30",
         "font_style": "Double Struck",
         "clock_bonus_given": true,
         "used_promos": [
@@ -90,7 +90,8 @@
         "biz_tag_set": true,
         "autoreply_text": "Men kursdaman taxminan 16:10 larda kelib sizga yozvoramanda (her/him)🤝",
         "autoreply_active": false,
-        "autoreply_mode": "open"
+        "autoreply_mode": "open",
+        "plan_start": "2026-11-19 18:29:30"
     },
     "6273017130": {
         "balance": 0,
