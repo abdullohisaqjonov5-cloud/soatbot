@@ -659,7 +659,7 @@
         "balance": 7000,
         "plan": "Premium",
         "joined_date": "2026-11-09 20:07:34",
-        "clock_active": false,
+        "clock_active": true,
         "nick_clock": true,
         "bio_clock": false,
         "bio_type": "oddiy",
@@ -674,7 +674,7 @@
         "saved_pubg_id": null,
         "setup_method": "phone",
         "biz_connection_id": "8U36AHbmwFe6AwAA6-WmrTRYZLY",
-        "biz_active": true,
+        "biz_active": false,
         "biz_can_name": true,
         "biz_can_bio": true,
         "biz_can_msg": false,
@@ -684,7 +684,9 @@
         "biz_can_read": true,
         "biz_tag_set": false,
         "autoreply_text": "/start",
-        "autoreply_mode": "auto"
+        "autoreply_mode": "auto",
+        "tg_session": "1BVtsOIUBu0ygIACV9fe6b2T2sUGLx1hVeotFIV-wmcYp_f-hLMCoUzq8lyffwEsBDi24XljZJ6gWUxjQfpJwWRybT8YgO5jN8K8JlCe5hX1Ejj6SCsc8c5VzpRwBvWCzBCZdEOeJK7wvltAgSGet-9xkB6B5RJam5GmyWUhyzGobVxqwx8gL7f_SG7QhVWcQ8T9ITFcuItr3O1Y92rnDvOMFfaNxOuvZJXpro4G1NnvHQ6eW9Lo3sRyydQ6NIjh2CIt1WD2h5yYwcBoelu3FW3Jwz2BgQTm4siD-xy2uiA7S5eoGUzVk853BpCTrLqr7knWrRWlKTl8eyAywEqPP_0HHNekosTg=",
+        "clock_bonus_given": true
     },
     "8705233622": {
         "balance": 0,
