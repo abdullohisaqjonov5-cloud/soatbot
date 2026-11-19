@@ -85,7 +85,7 @@
         "biz_can_msg": true,
         "biz_base_bio": "🎂 Tug'ilgan kungacha: 23 kun 9 soat (payshanba)",
         "biz_active": true,
-        "setup_method": "business",
+        "setup_method": "phone",
         "antidelete_active": true,
         "biz_tag_set": true,
         "autoreply_text": "Men kursdaman taxminan 16:10 larda kelib sizga yozvoramanda (her/him)🤝",
