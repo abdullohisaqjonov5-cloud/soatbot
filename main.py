@@ -82,7 +82,7 @@ os.makedirs("sessions", exist_ok=True)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip().strip('"').strip("'")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "isaqjonovabdulloh59-svg/REPO_NOMI")
 # To'liq havola (https://github.com/user/repo) yoki ".git" yozilgan bo'lsa ham, "user/repo" ko'rinishiga keltiriladi
 GITHUB_REPO = re.sub(r"^(https?://)?(www\.)?github\.com/", "", GITHUB_REPO.strip()).strip("/").removesuffix(".git")
@@ -225,50 +225,109 @@ async def _delayed_github_push(delay=5):
 
 _github_lock = asyncio.Lock()
 
+_last_pushed_fp = None     # GitHub'ga oxirgi muvaffaqiyatli yozilgan bazaning "barmoq izi"
+_github_fail_count = 0
+
+
+def _db_fingerprint():
+    raw = json.dumps([db, promos_db], sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _github_explain(status):
+    if status == 401:
+        return "TOKEN yaroqsiz yoki muddati tugagan (401). Yangi GITHUB_TOKEN yarating va Render'ga qo'ying."
+    if status == 403:
+        return "Token ruxsati yetmaydi yoki limit tugagan (403). Token 'Contents: Read and write' ruxsatiga ega bo'lsin."
+    if status == 404:
+        return f"Repo/branch topilmadi yoki token reponi ko'rmaydi (404). GITHUB_REPO={GITHUB_REPO}, GITHUB_BRANCH={GITHUB_BRANCH}"
+    return f"HTTP {status}"
+
+
 async def _github_put_file(session, path, content: bytes, message):
+    """Faylni GitHub'ga yozadi. Vaqtincha xatolarda (409/422/5xx/tarmoq) 4 martagacha qayta urinadi. True/False qaytaradi."""
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json",
     }
-    sha = None
-    async with session.get(url, headers=headers, params={"ref": GITHUB_BRANCH}) as r:
-        if r.status == 200:
-            sha = (await r.json()).get("sha")
-    body = {
-        "message": message,
-        "content": base64.b64encode(content).decode("ascii"),
-        "branch": GITHUB_BRANCH,
-    }
-    if sha:
-        body["sha"] = sha
-    async with session.put(url, headers=headers, json=body) as r:
-        if r.status not in (200, 201):
-            logging.error(f"GitHub {path} yozilmadi: {r.status} {await r.text()}")
+    for attempt in range(4):
+        try:
+            sha = None
+            async with session.get(url, headers=headers, params={"ref": GITHUB_BRANCH}) as r:
+                if r.status == 200:
+                    sha = (await r.json()).get("sha")
+                elif r.status in (401, 403):
+                    logging.error(f"GitHub {path}: {_github_explain(r.status)}")
+                    return False
+            body = {
+                "message": message,
+                "content": base64.b64encode(content).decode("ascii"),
+                "branch": GITHUB_BRANCH,
+            }
+            if sha:
+                body["sha"] = sha
+            async with session.put(url, headers=headers, json=body) as r:
+                if r.status in (200, 201):
+                    return True
+                text = await r.text()
+                if r.status in (401, 403, 404):
+                    logging.error(f"GitHub {path} yozilmadi: {_github_explain(r.status)}")
+                    return False
+                logging.error(f"GitHub {path} yozilmadi (urinish {attempt + 1}/4): {r.status} {text[:200]}")
+        except Exception as e:
+            logging.error(f"GitHub {path} tarmoq xatosi (urinish {attempt + 1}/4): {e}")
+        await asyncio.sleep(2 * (attempt + 1))
+    return False
+
 
 async def push_to_github():
-    """users_db.json va promos_db.json ni GitHub'ga yangilaydi."""
+    """users_db.json va promos_db.json ni GitHub'ga yangilaydi. Muvaffaqiyatli bo'lsa True."""
+    global _last_synced, _last_pushed_fp, _github_fail_count
     if not GITHUB_TOKEN:
-        return
+        return False
     async with _github_lock:
         try:
-            global _last_synced
             now = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=40)) as session:
                 remote = await fetch_remote_db(session)          # userbot yozgan o'zgarishlarni yo'qotmaslik uchun
                 if remote is None:
                     logging.error("GitHub bazasini o'qib bo'lmadi — zaxira eski nusxa ustiga yozilmaydi (keyingi urinishda qayta uriniladi)")
-                    return
+                    _github_fail_count += 1
+                    return False
                 banned = merge_remote(remote)
                 if banned:
                     await kick_banned(banned)
+                fp = _db_fingerprint()
                 users_bytes = json.dumps(db, ensure_ascii=False, indent=4).encode("utf-8")
                 promos_bytes = json.dumps(promos_db, ensure_ascii=False, indent=4).encode("utf-8")
-                await _github_put_file(session, "users_db.json", users_bytes, f"Auto backup {now} [skip render] [skip ci]")
-                await _github_put_file(session, "promos_db.json", promos_bytes, f"Auto backup {now} [skip render] [skip ci]")
-            _last_synced = copy.deepcopy(db)
+                ok1 = await _github_put_file(session, "users_db.json", users_bytes, f"Auto backup {now} [skip render] [skip ci]")
+                ok2 = await _github_put_file(session, "promos_db.json", promos_bytes, f"Auto backup {now} [skip render] [skip ci]")
+            if ok1 and ok2:
+                _last_synced = copy.deepcopy(db)
+                _last_pushed_fp = fp
+                _github_fail_count = 0
+                return True
+            _github_fail_count += 1
+            return False
         except Exception as e:
             logging.error(f"GitHub push xatosi: {e}")
+            _github_fail_count += 1
+            return False
+
+
+async def github_autosave_loop():
+    """Baza o'zgargan bo'lsa (kim nima o'rnatgan bo'lsa ham) GitHub'ga o'zi yozadi. Xato bo'lsa qayta uriniladi."""
+    await asyncio.sleep(15)
+    while True:
+        try:
+            if GITHUB_TOKEN and not _github_lock.locked() and _db_fingerprint() != _last_pushed_fp:
+                await push_to_github()
+        except Exception as e:
+            logging.error(f"Avto-saqlash xatosi: {e}")
+        # Xato ketma-ket bo'lsa, kutish uzayadi (30s -> 5 daqiqagacha), lekin to'xtamaydi
+        await asyncio.sleep(min(30 * (2 ** min(_github_fail_count, 4)), 300) if _github_fail_count else 30)
+
 
 _last_synced = {}   # str_id -> GitHub'dagi oxirgi ma'lum holat (3 tomonlama birlashtirish uchun asos)
 
@@ -283,7 +342,7 @@ async def fetch_remote_db(session):
                 logging.error(f"GitHub: users_db.json topilmadi yoki repo/token noto'g'ri (404). GITHUB_REPO={GITHUB_REPO}")
                 return {}
             if r.status != 200:
-                logging.error(f"GitHub baza o'qilmadi: HTTP {r.status}")
+                logging.error(f"GitHub baza o'qilmadi: HTTP {r.status} — {_github_explain(r.status)}")
                 return None
             data = json.loads(await r.text())
             return data if isinstance(data, dict) else None
@@ -4654,6 +4713,27 @@ async def main():
     dp.callback_query.outer_middleware(BanMiddleware())
     if GITHUB_TOKEN:
         asyncio.create_task(sync_remote_loop())
+        asyncio.create_task(github_autosave_loop())
+
+    # Render deploy/o'chirish (SIGTERM) paytida ham oxirgi o'zgarishlar GitHub'ga yoziladi
+    try:
+        import signal
+
+        async def _graceful_stop():
+            try:
+                await asyncio.wait_for(push_to_github(), timeout=20)
+            except Exception as e:
+                print("O'chirishdan oldin saqlashda xato:", e)
+            try:
+                await dp.stop_polling()
+            except Exception:
+                pass
+
+        asyncio.get_running_loop().add_signal_handler(
+            signal.SIGTERM, lambda: asyncio.create_task(_graceful_stop()))
+    except Exception as e:
+        print("SIGTERM handler o'rnatilmadi:", e)
+
     await dp.start_polling(bot)
 
 
