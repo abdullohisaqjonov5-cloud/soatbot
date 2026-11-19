@@ -69,7 +69,7 @@ DAYS_OF_WEEK_UZ = {
 }
 
 # Murojaat / yordam
-ADMIN_USERNAME = "tmclock_bot_admin"
+ADMIN_USERNAME = "soatbotSUPPORT"
 DEV_USERNAME = "mrCODERRR"
 
 # Premium (custom) emoji ID lari. Bo'sh qoldirilsa, oddiy emoji ishlatiladi.
@@ -510,17 +510,6 @@ def effective_font(u_data):
     return "Default"
 
 
-def build_final_bio(clean_bio, extra_bio, is_free):
-    """Free tarifda '@tmclock_bot orqali qo'yildi' yozuvi har doim bioda qoladi
-    (u sig'ishi uchun foydalanuvchining o'z bio matni kerak bo'lsa qisqartiriladi)."""
-    if is_free:
-        room = max(BIO_MAX - len(FREE_BIO_TAG) - 1, 0)
-        base = clean_bio[:room].rstrip()
-        return f"{base} {FREE_BIO_TAG}".strip()
-    final = f"{clean_bio} " + " | ".join(extra_bio) if extra_bio else clean_bio
-    return final[:BIO_MAX]
-
-
 def biz_should_set_bio(u_data):
     """Business usulida bioni yangilash kerakmi? Free'da doim (yozuv o'chirilsa qayta chiqadi)."""
     if not u_data.get("biz_can_bio", False):
@@ -529,10 +518,10 @@ def biz_should_set_bio(u_data):
     if plan == "Free":
         u_data["biz_tag_set"] = True
         return True
-    if u_data.get("bio_clock", False) and plan in ["Plus", "Premium"]:
-        u_data["biz_tag_set"] = False
+    if u_data.get("bio_clock", False) and plan in BIO_PLANS:
+        u_data["biz_tag_set"] = True      # bioga soat yozildi - o'chirilganda tozalash kerak bo'ladi
         return True
-    if u_data.get("biz_tag_set", False):  # tarif oshgach eski yozuvni tozalash
+    if u_data.get("biz_tag_set", False):  # bio o'chirilgan / tarif tugagan: eski yozuvni BIR MARTA tozalaymiz
         u_data["biz_tag_set"] = False
         return True
     return False
@@ -547,6 +536,398 @@ def get_hijri_qurbon_hayiti(year):
     }
     target_dt = qurbon_dates.get(year, (datetime(year, 6, 1, tzinfo=TASHKENT_TZ), "05:30"))
     return target_dt
+
+
+# ================= BIO: PLANLAR, HISOBLAGICHLAR, NAMOZ VAQTLARI =================
+# Bio funksiyalari qaysi tariflarda ishlaydi (Standard, Plus va Premium).
+BIO_PLANS = ["Standard", "Plus", "Premium"]
+BIO_PLANS_TEXT = "Standard ⏰, Plus ✨ va Premium ⭐️"
+
+TASHKENT_LAT, TASHKENT_LNG = 41.2995, 69.2401
+PRAYER_NAMES = {"bomdod": "Bomdod", "peshin": "Peshin", "asr": "Asr", "shom": "Shom", "xufton": "Xufton"}
+
+
+def fmt_dur(seconds):
+    """Soniyani '15 kun 4 soat 15 min' ko'rinishiga o'tkazadi (nol birliklar tushirib qoldiriladi)."""
+    total_min = max(int(seconds) // 60, 0)
+    days, rem = divmod(total_min, 1440)
+    hours, mins = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} kun")
+    if days or hours:
+        parts.append(f"{hours} soat")
+    parts.append(f"{mins} min")
+    return " ".join(parts)
+
+
+def _minute_floor(dt):
+    return dt.replace(second=0, microsecond=0)
+
+
+def countdown_line(emoji, title, month, day, now_dt, today_text, show_wday=True):
+    """Aniq sanagacha (har yili 00:00 da boshlanadi) qancha vaqt qolganini hisoblaydi."""
+    now_m = _minute_floor(now_dt)
+    if now_m.month == month and now_m.day == day:
+        return today_text
+    target = datetime(now_m.year, month, day, 0, 0, tzinfo=TASHKENT_TZ)
+    if target <= now_m:
+        target = datetime(now_m.year + 1, month, day, 0, 0, tzinfo=TASHKENT_TZ)
+    left = fmt_dur((target - now_m).total_seconds())
+    wd = f" ({DAYS_OF_WEEK_UZ[target.weekday()]})" if show_wday else ""
+    return f"{emoji} {title} {left} qoldi{wd}"
+
+
+# ---------- Namoz vaqtlari (Toshkent) ----------
+def calc_prayer_local(d):
+    """Internet bo'lmasa ishlatiladigan zaxira hisob (astronomik formula). Taxminiy: ±10 daqiqa."""
+    import math
+    tz = 5
+    y, m, dd = d.year, d.month, d.day
+    if m <= 2:
+        y -= 1
+        m += 12
+    A = y // 100
+    jd = int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + dd + (2 - A + A // 4) - 1524.5
+    jd -= TASHKENT_LNG / (15 * 24.0)
+    D = jd + 0.5 - 2451545.0
+    g = math.radians((357.529 + 0.98560028 * D) % 360)
+    q = (280.459 + 0.98564736 * D) % 360
+    L = math.radians((q + 1.915 * math.sin(g) + 0.020 * math.sin(2 * g)) % 360)
+    e = math.radians(23.439 - 0.00000036 * D)
+    RA = (math.degrees(math.atan2(math.cos(e) * math.sin(L), math.cos(L))) / 15.0) % 24
+    decl = math.asin(math.sin(e) * math.sin(L))
+    eqt = q / 15.0 - RA
+    while eqt > 12:
+        eqt -= 24
+    while eqt < -12:
+        eqt += 24
+    la = math.radians(TASHKENT_LAT)
+    noon = 12 + tz - TASHKENT_LNG / 15.0 - eqt
+
+    def hour_angle(sin_alt):
+        x = (sin_alt - math.sin(decl) * math.sin(la)) / (math.cos(decl) * math.cos(la))
+        return math.degrees(math.acos(max(-1.0, min(1.0, x)))) / 15.0
+
+    alt_asr = math.atan(1.0 / (2 + math.tan(abs(la - decl))))   # Hanafiy asr (soya 2 barobar)
+    vals = {
+        "bomdod": noon - hour_angle(-math.sin(math.radians(16.0))),
+        "quyosh": noon - hour_angle(-math.sin(math.radians(0.833))),
+        "peshin": noon + 1 / 60.0,
+        "asr": noon + hour_angle(math.sin(alt_asr)),
+        "shom": noon + hour_angle(-math.sin(math.radians(0.833))) + 3 / 60.0,
+        "xufton": noon + hour_angle(-math.sin(math.radians(15.0))),
+    }
+    base = datetime(d.year, d.month, d.day, tzinfo=TASHKENT_TZ)
+    return {k: base + timedelta(hours=v) for k, v in vals.items()}
+
+
+PRAYER_FILE = "prayer_cache.json"
+PRAYER_CACHE = {}          # sana -> {"bomdod": datetime, ...}  (faqat RASMIY manbalardan)
+PRAYER_SOURCE = {}         # sana -> manba nomi
+PRAYER_KEYS = ["bomdod", "quyosh", "peshin", "asr", "shom", "xufton"]
+UZ_MONTHS = {"yanvar": 1, "fevral": 2, "mart": 3, "aprel": 4, "may": 5, "iyun": 6,
+             "iyul": 7, "avgust": 8, "sentabr": 9, "oktabr": 10, "noyabr": 11, "dekabr": 12}
+PRAYER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "application/json, text/html;q=0.9,*/*;q=0.8",
+}
+
+
+def _hhmm_to_dt(d, s):
+    m = re.search(r"(\d{1,2}):(\d{2})", str(s))
+    if not m:
+        raise ValueError(f"vaqt formati xato: {s}")
+    return datetime(d.year, d.month, d.day, int(m.group(1)), int(m.group(2)), tzinfo=TASHKENT_TZ)
+
+
+def _times_from_strings(d, t):
+    return {k: _hhmm_to_dt(d, t[k]) for k in PRAYER_KEYS}
+
+
+def _valid_day(times, d):
+    """Vaqtlar tartibli va hisob-kitobdan 25 daqiqadan ortiq farq qilmasligini tekshiradi (xato ma'lumotni rad etadi)."""
+    try:
+        seq = [times[k] for k in PRAYER_KEYS]
+    except KeyError:
+        return False
+    if any(seq[i] >= seq[i + 1] for i in range(len(seq) - 1)):
+        return False
+    ref = calc_prayer_local(d)
+    return all(abs((times[k] - ref[k]).total_seconds()) <= 25 * 60 for k in PRAYER_KEYS)
+
+
+async def _http_get(session, url, as_json=False):
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+        if r.status != 200:
+            raise RuntimeError(f"HTTP {r.status}")
+        if as_json:
+            return await r.json(content_type=None)
+        return await r.text()
+
+
+def _parse_month_json(data):
+    """namoz-vaqti.uz JSON (O'zbekiston Musulmonlari idorasi / Din ishlari qo'mitasi ma'lumotlari)."""
+    days = {}
+    for row in (data.get("period_table") or []):
+        try:
+            dd, mm, yy = row["date"].split(".")
+            d = date(int(yy), int(mm), int(dd))
+            t = _times_from_strings(d, row["times"])
+            if _valid_day(t, d):
+                days[d] = t
+        except Exception:
+            continue
+    try:   # "today" bo'limi ham bor
+        y, m, dd = data["meta"]["date"].split("-")
+        d = date(int(y), int(m), int(dd))
+        t = _times_from_strings(d, data["today"]["times"])
+        if _valid_day(t, d):
+            days.setdefault(d, t)
+    except Exception:
+        pass
+    return days
+
+
+def _parse_month_html(text):
+    """Oylik jadval HTML sahifasi (zaxira usul): 'DD.MM.YYYY | 05:52 | 07:15 | ...' qatorlari."""
+    plain = re.sub(r"<[^>]+>", " ", text)
+    days = {}
+    for m in re.finditer(r"(\d{2})\.(\d{2})\.(\d{4})((?:\s*\|?\s*\d{1,2}:\d{2}){6})", plain):
+        try:
+            d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            hh = re.findall(r"\d{1,2}:\d{2}", m.group(4))
+            t = _times_from_strings(d, dict(zip(PRAYER_KEYS, hh)))
+            if _valid_day(t, d):
+                days[d] = t
+        except Exception:
+            continue
+    return days
+
+
+async def _fetch_month(session, y, mth):
+    ym = f"{y}-{mth:02d}"
+    # 1) JSON API
+    try:
+        data = await _http_get(
+            session, f"https://namoz-vaqti.uz/index.php?format=json&lang=en&period={ym}&region=toshkent-shahri", True)
+        days = _parse_month_json(data)
+        if days:
+            return days
+    except Exception as e:
+        print("namoz-vaqti.uz (JSON) xatosi:", e)
+    # 2) o'sha saytning HTML jadvali
+    try:
+        html = await _http_get(session, f"https://namoz-vaqti.uz/en/namoz-vaqtlari/toshkent-shahri/oylik/{ym}")
+        days = _parse_month_html(html)
+        if days:
+            return days
+    except Exception as e:
+        print("namoz-vaqti.uz (HTML) xatosi:", e)
+    return {}
+
+
+async def _fetch_praytime_today(session, today):
+    """praytime.uz (Muftiyat taqvimi) - faqat bugun uchun zaxira manba."""
+    try:
+        html = await _http_get(session, "https://praytime.uz/?region_id=1&lng=uz")
+        plain = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
+        plain = re.sub(r"<[^>]+>", " ", plain)
+        dm = re.search(r"(\d{1,2})-(" + "|".join(UZ_MONTHS) + ")", plain, re.I)
+        if not dm or int(dm.group(1)) != today.day or UZ_MONTHS[dm.group(2).lower()] != today.month:
+            print("praytime.uz: sahifa sanasi bugungi sanaga mos emas")
+            return {}
+        tail = plain[dm.end():]
+        times = re.findall(r"(?<![\d:])(\d{2}:\d{2})(?![\d:])", tail)
+        if len(times) < 7:
+            return {}
+        # tartib: Tong, Quyosh, Zuho, Peshin, Asr, Shom, Xufton
+        t = {"bomdod": times[0], "quyosh": times[1], "peshin": times[3],
+             "asr": times[4], "shom": times[5], "xufton": times[6]}
+        parsed = _times_from_strings(today, t)
+        return {today: parsed} if _valid_day(parsed, today) else {}
+    except Exception as e:
+        print("praytime.uz xatosi:", e)
+        return {}
+
+
+def _save_prayer_cache():
+    try:
+        today = datetime.now(TASHKENT_TZ).date()
+        out = {d.isoformat(): {k: v[k].strftime("%H:%M") for k in PRAYER_KEYS}
+               for d, v in PRAYER_CACHE.items() if d >= today - timedelta(days=3)}
+        with open(PRAYER_FILE, "w", encoding="utf-8") as f:
+            json.dump(out, f)
+    except Exception as e:
+        print("Namoz keshini saqlashda xato:", e)
+
+
+def _load_prayer_cache():
+    """Bot qayta ishga tushganda (internet vaqtincha yo'q bo'lsa ham) oxirgi rasmiy vaqtlar tiklanadi."""
+    try:
+        if not os.path.exists(PRAYER_FILE):
+            return
+        with open(PRAYER_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        for k, v in raw.items():
+            d = date.fromisoformat(k)
+            t = _times_from_strings(d, v)
+            if _valid_day(t, d):
+                PRAYER_CACHE[d] = t
+                PRAYER_SOURCE.setdefault(d, "kesh")
+    except Exception as e:
+        print("Namoz keshini o'qishda xato:", e)
+
+
+def prayer_data_ok():
+    """Bugun va ertaga uchun rasmiy (yangi) ma'lumot bormi?"""
+    today = datetime.now(TASHKENT_TZ).date()
+    return all(PRAYER_SOURCE.get(d) in ("namoz-vaqti.uz", "praytime.uz")
+               for d in (today, today + timedelta(days=1)))
+
+
+async def refresh_prayer_cache():
+    """Rasmiy manbalardan Toshkent vaqtlarini yangilaydi. Vaqtlar o'zgargan bo'lsa, eskisi ustiga yoziladi."""
+    today = datetime.now(TASHKENT_TZ).date()
+    months = sorted({(d.year, d.month) for d in (today - timedelta(days=1), today, today + timedelta(days=1))})
+    changed = False
+    async with aiohttp.ClientSession(headers=PRAYER_HEADERS) as session:
+        for (y, mth) in months:
+            days = await _fetch_month(session, y, mth)
+            for d, t in days.items():
+                if PRAYER_CACHE.get(d) != t:
+                    changed = True
+                PRAYER_CACHE[d] = t
+                PRAYER_SOURCE[d] = "namoz-vaqti.uz"
+        if PRAYER_SOURCE.get(today) != "namoz-vaqti.uz":
+            days = await _fetch_praytime_today(session, today)
+            for d, t in days.items():
+                if PRAYER_CACHE.get(d) != t:
+                    changed = True
+                PRAYER_CACHE[d] = t
+                PRAYER_SOURCE[d] = "praytime.uz"
+    for d in list(PRAYER_CACHE):
+        if d < today - timedelta(days=3):
+            PRAYER_CACHE.pop(d, None)
+            PRAYER_SOURCE.pop(d, None)
+    if changed:
+        _save_prayer_cache()
+        print("Namoz vaqtlari yangilandi:", PRAYER_SOURCE.get(today))
+
+
+async def prayer_refresh_loop():
+    _load_prayer_cache()
+    while True:
+        try:
+            await refresh_prayer_cache()
+        except Exception as e:
+            print("Namoz yangilash sikli xatosi:", e)
+        # Rasmiy ma'lumot yo'q bo'lsa 10 daqiqada, bo'lsa 2 soatda qayta tekshiradi (o'zgarishlar avtomatik olinadi)
+        await asyncio.sleep(600 if not prayer_data_ok() else 7200)
+
+
+def get_prayer_times(d):
+    """Rasmiy vaqt bo'lsa — o'sha. Bo'lmasa: eng yaqin rasmiy kunning farqi (siljishi) bilan to'g'rilangan hisob."""
+    if d in PRAYER_CACHE:
+        return PRAYER_CACHE[d]
+    local = calc_prayer_local(d)
+    if PRAYER_CACHE:
+        ref_d = min(PRAYER_CACHE, key=lambda x: abs((x - d).days))
+        if abs((ref_d - d).days) <= 45:
+            ref_local = calc_prayer_local(ref_d)
+            ref_off = {k: PRAYER_CACHE[ref_d][k] - ref_local[k] for k in PRAYER_KEYS}
+            return {k: local[k] + ref_off[k] for k in PRAYER_KEYS}
+    return local
+
+
+def prayer_line(now_dt):
+    """Hozirgi namoz: qachon kirdi/qachon chiqadi va necha soat-daqiqa qolgani. Chiqqach keyingisigacha."""
+    now_m = _minute_floor(now_dt)
+    today = now_m.date()
+    windows = []
+    for off in (-1, 0, 1):
+        d = today + timedelta(days=off)
+        t = get_prayer_times(d)
+        nxt = get_prayer_times(d + timedelta(days=1))
+        windows += [
+            ("bomdod", t["bomdod"], t["quyosh"]),
+            ("peshin", t["peshin"], t["asr"]),
+            ("asr", t["asr"], t["shom"]),
+            ("shom", t["shom"], t["xufton"]),
+            ("xufton", t["xufton"], nxt["bomdod"]),
+        ]
+    windows.sort(key=lambda w: w[1])
+    for name, start, end in windows:
+        if start <= now_m < end:
+            left = fmt_dur((end - now_m).total_seconds())
+            return (f"🕌 {PRAYER_NAMES[name]} {start.strftime('%H:%M')}-{end.strftime('%H:%M')} "
+                    f"| chiqishiga {left} qoldi")
+    for name, start, end in windows:
+        if start > now_m:   # Quyosh chiqqandan Peshingacha bo'lgan oraliq
+            left = fmt_dur((start - now_m).total_seconds())
+            return f"🕌 {PRAYER_NAMES[name]} {start.strftime('%H:%M')} da kiradi | {left} qoldi"
+    return "🕌 Namoz vaqti"
+
+
+def build_bio_extra(u_data, now_dt, now_str):
+    """Bio uchun qo'shimcha matn (bio tipiga qarab). Ikkala soat usuli (telefon va Business) shundan foydalanadi."""
+    extra = []
+    if not (u_data.get("bio_clock", False) and u_data.get("plan") in BIO_PLANS):
+        return extra
+    b_type = u_data.get("bio_type", "oddiy")
+    if b_type == "oddiy":
+        extra.append(f"🕒 {now_str}")
+    elif b_type == "salomlashish":
+        hour = now_dt.hour
+        if 5 <= hour < 12:
+            extra.append("Good morning ☀️")
+        elif 12 <= hour < 17:
+            extra.append("Good afternoon 🌤")
+        elif 17 <= hour < 22:
+            extra.append("Good evening 🌙")
+        else:
+            extra.append("Good night 🌠")
+    elif b_type == "tugilgan_kun":
+        try:
+            b_month, b_day = map(int, u_data.get("birthday_date", "12-25").split("-"))
+            extra.append(countdown_line("🎂", "Tug'ilgan kunga", b_month, b_day, now_dt, "🎂 Bugun tug'ilgan kun! 🎉"))
+        except Exception:
+            extra.append("🎂 Tug'ilgan kun")
+    elif b_type == "yangi_yil":
+        extra.append(countdown_line("🎄", "Yangi yilga", 1, 1, now_dt, "🎄 Yangi yil muborak! 🎉", show_wday=False))
+    elif b_type == "vatan_himoyachilari":
+        extra.append(countdown_line("🎖", "14-yanvarga", 1, 14, now_dt, "🎖 Bugun Vatan himoyachilari kuni!"))
+    elif b_type == "sakkiz_mart":
+        extra.append(countdown_line("🌷", "8-martga", 3, 8, now_dt, "🌷 Bugun 8-mart bayrami!"))
+    elif b_type == "namoz":
+        extra.append(prayer_line(now_dt))
+    elif b_type == "qurbon_hayiti":
+        qh_dt, namoz_time = get_hijri_qurbon_hayiti(now_dt.year)
+        if qh_dt.date() < now_dt.date():
+            qh_dt, namoz_time = get_hijri_qurbon_hayiti(now_dt.year + 1)
+        if qh_dt.date() == now_dt.date():
+            extra.append(f"🕌 Bugun Qurbon hayiti! Namoz: {namoz_time}")
+        else:
+            left = fmt_dur((qh_dt - _minute_floor(now_dt)).total_seconds())
+            extra.append(f"🕌 Qurbon hayitiga {left} qoldi ({DAYS_OF_WEEK_UZ[qh_dt.weekday()]})")
+    return extra
+
+
+def build_final_bio(clean_bio, extra_bio, is_free):
+    """Free tarifda reklama yozuvi doim qoladi. Boshqalarda soat matni DOIM sig'adi:
+    kerak bo'lsa foydalanuvchining o'z bio matni qisqartiriladi (soat kesilib qolmaydi)."""
+    if is_free:
+        room = max(BIO_MAX - len(FREE_BIO_TAG) - 1, 0)
+        base = clean_bio[:room].rstrip()
+        return f"{base} {FREE_BIO_TAG}".strip()
+    if not extra_bio:
+        return clean_bio[:BIO_MAX]
+    extra = " | ".join(extra_bio)[:BIO_MAX]
+    room = BIO_MAX - len(extra) - 3
+    if room <= 0 or not clean_bio:
+        return extra
+    return f"{clean_bio[:room].rstrip()} | {extra}"[:BIO_MAX]
+# =================================================================================
 
 
 class ClockSetup(StatesGroup):
@@ -630,10 +1011,12 @@ def online_status_text(u_data):
 
 
 async def keep_online_loop(user_id, client):
-    """Online rejim yoniq bo'lsa, profilni doimo 'online' holatda ushlab turadi (har 15 soniyada).
-    Ulanish uzilsa avtomatik qayta ulanadi."""
+    """Online rejim yoqilgan bo'lsa, profilni doimo 'online' holatda ushlab turadi (har 10 soniyada).
+    Ulanish uzilsa avtomatik qayta ulanadi, FloodWait bo'lsa kutadi, sessiya o'lsa to'xtaydi."""
+    from telethon.errors import FloodWaitError
     fails = 0
     while user_id in active_clocks:
+        delay = 10
         try:
             u = get_user_data(user_id)
             if u.get("plan") == "Premium" and u.get("online_mode", False):
@@ -641,6 +1024,14 @@ async def keep_online_loop(user_id, client):
                     await client.connect()
                 await client(functions.account.UpdateStatusRequest(offline=False))
                 fails = 0
+        except FloodWaitError as fw:
+            delay = min(int(getattr(fw, "seconds", 30)) + 1, 120)
+            print(f"Online holat FloodWait ({user_id}): {delay}s")
+        except (AuthKeyDuplicatedError, UserDeactivatedError) as e:
+            print(f"Online holat: sessiya yaroqsiz ({user_id}):", e)
+            return
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             fails += 1
             print(f"Online holat xatosi ({user_id}) [{fails}]:", e)
@@ -654,7 +1045,7 @@ async def keep_online_loop(user_id, client):
                 except Exception:
                     pass
                 fails = 0
-        await asyncio.sleep(15)
+        await asyncio.sleep(delay)
 
 
 online_tasks = {}
@@ -688,70 +1079,7 @@ def compute_clock_name_and_bio(user_id, u_data, base_bio_text):
         clean_bio = about_text
     clean_bio = re.sub(r"(🕒|⏳|🎂|🎄|✨|🕌|Soat @tmclock_bot|Good|Tug'ilgan|Yangi|Vatan|Qurbon|8-mart).*$", "", clean_bio).strip()
 
-    extra_bio = []
-    if u_data.get("bio_clock", False) and u_data.get("plan") in ["Plus", "Premium"]:
-        b_type = u_data.get("bio_type", "oddiy")
-        if b_type == "oddiy":
-            extra_bio.append(f"🕒 {now}")
-        elif b_type == "salomlashish":
-            hour = now_dt.hour
-            if 5 <= hour < 12:
-                salom = "Good morning ☀️"
-            elif 12 <= hour < 17:
-                salom = "Good afternoon 🌤"
-            elif 17 <= hour < 22:
-                salom = "Good evening 🌙"
-            else:
-                salom = "Good night 🌠"
-            extra_bio.append(salom)
-        elif b_type == "tugilgan_kun":
-            b_date_str = u_data.get("birthday_date", "12-25")
-            try:
-                b_month, b_day = map(int, b_date_str.split("-"))
-                b_target = datetime(now_dt.year, b_month, b_day, 0, 0, tzinfo=TASHKENT_TZ)
-                if b_target < now_dt:
-                    b_target = datetime(now_dt.year + 1, b_month, b_day, 0, 0, tzinfo=TASHKENT_TZ)
-                diff = b_target - now_dt
-                days = diff.days
-                hours = diff.total_seconds() // 3600
-                weekday_name = DAYS_OF_WEEK_UZ[b_target.weekday()]
-                extra_bio.append(f"🎂 Tug'ilgan kungacha: {days} kun {int(hours)%24} soat ({weekday_name})")
-            except Exception:
-                extra_bio.append("🎂 Tug'ilgan kun")
-        elif b_type == "yangi_yil":
-            ny_target = datetime(now_dt.year + 1, 1, 1, 0, 0, tzinfo=TASHKENT_TZ)
-            diff = ny_target - now_dt
-            days = diff.days
-            hours = int(diff.total_seconds()) // 3600
-            extra_bio.append(f"🎄 Yangi yilgacha: {days} kun {hours%24} soat")
-        elif b_type == "vatan_himoyachilari":
-            target = datetime(now_dt.year, 1, 14, 0, 0, tzinfo=TASHKENT_TZ)
-            if target < now_dt:
-                target = datetime(now_dt.year + 1, 1, 14, 0, 0, tzinfo=TASHKENT_TZ)
-            diff = target - now_dt
-            days = diff.days
-            hours = int(diff.total_seconds()) // 3600
-            wday = DAYS_OF_WEEK_UZ[target.weekday()]
-            extra_bio.append(f"🎖 14-yanvargacha: {days}k {hours%24}s ({wday})")
-        elif b_type == "sakkiz_mart":
-            target = datetime(now_dt.year, 3, 8, 0, 0, tzinfo=TASHKENT_TZ)
-            if target < now_dt:
-                target = datetime(now_dt.year + 1, 3, 8, 0, 0, tzinfo=TASHKENT_TZ)
-            diff = target - now_dt
-            days = diff.days
-            hours = int(diff.total_seconds()) // 3600
-            wday = DAYS_OF_WEEK_UZ[target.weekday()]
-            extra_bio.append(f"🌷 8-martgacha: {days}k {hours%24}s ({wday})")
-        elif b_type == "qurbon_hayiti":
-            qh_dt, namoz_time = get_hijri_qurbon_hayiti(now_dt.year)
-            if qh_dt < now_dt:
-                qh_dt, namoz_time = get_hijri_qurbon_hayiti(now_dt.year + 1)
-            diff = qh_dt - now_dt
-            days = diff.days
-            hours = int(diff.total_seconds()) // 3600
-            wday = DAYS_OF_WEEK_UZ[qh_dt.weekday()]
-            extra_bio.append(f"🕌 Qurbon hayiti ({wday}): {days}k {hours%24}s | Namoz: {namoz_time}")
-
+    extra_bio = build_bio_extra(u_data, now_dt, now)
     final_bio = build_final_bio(clean_bio, extra_bio, u_data.get("plan") == "Free")
     return new_last_name, final_bio
 
@@ -846,6 +1174,8 @@ async def start_user_clock(user_id, client):
     while user_id in active_clocks:
         try:
             u_data = get_user_data(user_id)
+            if u_data.get("online_mode", False):
+                ensure_online_task(user_id)   # online-ushlagich to'xtab qolgan bo'lsa, qayta ishga tushiradi
             
             if u_data.get("plan") != "Free" and u_data.get("plan_expire") != "Mavjud emas":
                 try:
@@ -894,71 +1224,7 @@ async def start_user_clock(user_id, client):
             
             clean_bio = re.sub(r"(🕒|⏳|🎂|🎄|✨|🕌|Soat @tmclock_bot|Good|Tug'ilgan|Yangi|Vatan|Qurbon|8-mart).*$", "", clean_bio).strip()
             
-            extra_bio = []
-            # Bio sozlamalari Plus va Premium uchun
-            if u_data.get("bio_clock", False) and u_data.get("plan") in ["Plus", "Premium"]:
-                b_type = u_data.get("bio_type", "oddiy")
-                if b_type == "oddiy":
-                    extra_bio.append(f"🕒 {now}")
-                elif b_type == "salomlashish":
-                    hour = now_dt.hour
-                    if 5 <= hour < 12:
-                        salom = "Good morning ☀️"
-                    elif 12 <= hour < 17:
-                        salom = "Good afternoon 🌤"
-                    elif 17 <= hour < 22:
-                        salom = "Good evening 🌙"
-                    else:
-                        salom = "Good night 🌠"
-                    extra_bio.append(salom)
-                elif b_type == "tugilgan_kun":
-                    b_date_str = u_data.get("birthday_date", "12-25")
-                    try:
-                        b_month, b_day = map(int, b_date_str.split("-"))
-                        b_target = datetime(now_dt.year, b_month, b_day, 0, 0, tzinfo=TASHKENT_TZ)
-                        if b_target < now_dt:
-                            b_target = datetime(now_dt.year + 1, b_month, b_day, 0, 0, tzinfo=TASHKENT_TZ)
-                        diff = b_target - now_dt
-                        days = diff.days
-                        hours = diff.total_seconds() // 3600
-                        weekday_name = DAYS_OF_WEEK_UZ[b_target.weekday()]
-                        extra_bio.append(f"🎂 Tug'ilgan kungacha: {days} kun {int(hours)%24} soat ({weekday_name})")
-                    except Exception:
-                        extra_bio.append("🎂 Tug'ilgan kun")
-                elif b_type == "yangi_yil":
-                    ny_target = datetime(now_dt.year + 1, 1, 1, 0, 0, tzinfo=TASHKENT_TZ)
-                    diff = ny_target - now_dt
-                    days = diff.days
-                    hours = int(diff.total_seconds()) // 3600
-                    extra_bio.append(f"🎄 Yangi yilgacha: {days} kun {hours%24} soat")
-                elif b_type == "vatan_himoyachilari":
-                    target = datetime(now_dt.year, 1, 14, 0, 0, tzinfo=TASHKENT_TZ)
-                    if target < now_dt:
-                        target = datetime(now_dt.year + 1, 1, 14, 0, 0, tzinfo=TASHKENT_TZ)
-                    diff = target - now_dt
-                    days = diff.days
-                    hours = int(diff.total_seconds()) // 3600
-                    wday = DAYS_OF_WEEK_UZ[target.weekday()]
-                    extra_bio.append(f"🎖 14-yanvargacha: {days}k {hours%24}s ({wday})")
-                elif b_type == "sakkiz_mart":
-                    target = datetime(now_dt.year, 3, 8, 0, 0, tzinfo=TASHKENT_TZ)
-                    if target < now_dt:
-                        target = datetime(now_dt.year + 1, 3, 8, 0, 0, tzinfo=TASHKENT_TZ)
-                    diff = target - now_dt
-                    days = diff.days
-                    hours = int(diff.total_seconds()) // 3600
-                    wday = DAYS_OF_WEEK_UZ[target.weekday()]
-                    extra_bio.append(f"🌷 8-martgacha: {days}k {hours%24}s ({wday})")
-                elif b_type == "qurbon_hayiti":
-                    qh_dt, namoz_time = get_hijri_qurbon_hayiti(now_dt.year)
-                    if qh_dt < now_dt:
-                        qh_dt, namoz_time = get_hijri_qurbon_hayiti(now_dt.year + 1)
-                    diff = qh_dt - now_dt
-                    days = diff.days
-                    hours = int(diff.total_seconds()) // 3600
-                    wday = DAYS_OF_WEEK_UZ[qh_dt.weekday()]
-                    extra_bio.append(f"🕌 Qurbon hayiti ({wday}): {days}k {hours%24}s | Namoz: {namoz_time}")
-
+            extra_bio = build_bio_extra(u_data, now_dt, now)
             final_bio = build_final_bio(clean_bio, extra_bio, u_data.get("plan") == "Free")
 
             await client(
@@ -2563,12 +2829,92 @@ async def process_promo_code(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+def _map_range(txt, upper, lower, digits=None, exc=None):
+    out = []
+    for ch in txt:
+        if exc and ch in exc:
+            out.append(exc[ch])
+        elif "A" <= ch <= "Z" and upper:
+            out.append(chr(upper + ord(ch) - 65))
+        elif "a" <= ch <= "z" and lower:
+            out.append(chr(lower + ord(ch) - 97))
+        elif "0" <= ch <= "9" and digits:
+            out.append(chr(digits + ord(ch) - 48))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+_SMALLCAPS = dict(zip("abcdefghijklmnopqrstuvwxyz", "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ"))
+_DS_EXC = {"C": "ℂ", "H": "ℍ", "N": "ℕ", "P": "ℙ", "Q": "ℚ", "R": "ℝ", "Z": "ℤ"}
+_IT_EXC = {"h": "ℎ"}
+
+
+def nick_fonts(t):
+    """Matn uchun turli Unicode shriftlar."""
+    return [
+        ("Qalin", _map_range(t, 0x1D400, 0x1D41A, 0x1D7CE)),
+        ("Kursiv", _map_range(t, 0x1D434, 0x1D44E, None, _IT_EXC)),
+        ("Qalin kursiv", _map_range(t, 0x1D468, 0x1D482, 0x1D7CE)),
+        ("Yozma (script)", _map_range(t, 0x1D4D0, 0x1D4EA, 0x1D7CE)),
+        ("Gotik", _map_range(t, 0x1D56C, 0x1D586, 0x1D7CE)),
+        ("Ikki chiziqli", _map_range(t, 0x1D538, 0x1D552, 0x1D7D8, _DS_EXC)),
+        ("Sans", _map_range(t, 0x1D5A0, 0x1D5BA, 0x1D7E2)),
+        ("Sans qalin", _map_range(t, 0x1D5D4, 0x1D5EE, 0x1D7EC)),
+        ("Sans kursiv", _map_range(t, 0x1D608, 0x1D622, None)),
+        ("Monospace", _map_range(t, 0x1D670, 0x1D68A, 0x1D7F6)),
+        ("Keng (fullwidth)", _map_range(t, 0xFF21, 0xFF41, 0xFF10)),
+        ("Aylana", _map_range(t, 0x24B6, 0x24D0, None)),
+        ("To'ldirilgan aylana", _map_range(t.upper(), 0x1F150, None)),
+        ("Kvadrat", _map_range(t.upper(), 0x1F130, None)),
+        ("To'ldirilgan kvadrat", _map_range(t.upper(), 0x1F170, None)),
+        ("Kichik bosh harf", "".join(_SMALLCAPS.get(c, c) for c in t.lower())),
+        ("Chizilgan", "".join(c + "\u0336" if c.strip() else c for c in t)),
+        ("Tagiga chizilgan", "".join(c + "\u0332" if c.strip() else c for c in t)),
+        ("Nuqtali", "".join(c + "\u0307" if c.strip() else c for c in t)),
+    ]
+
+
+def nick_decorated(t, bold, script):
+    """Bezak (ramka, belgilar) bilan niklar."""
+    return [
+        ("Qirollik", f"꧁ {bold} ꧂"),
+        ("Toj", f"♛ {script} ♛"),
+        ("Chaqmoq", f"⚡️ {bold} ⚡️"),
+        ("Yulduz", f"★彡 {bold} 彡★"),
+        ("Kitob ramka", f"『 {bold} 』"),
+        ("Qalin ramka", f"【 {bold} 】"),
+        ("Gul", f"༺ {script} ༻"),
+        ("Olov", f"🔥 {bold} 🔥"),
+        ("Yulduzcha", f"✦ {script} ✦"),
+        ("Yurak", f"♡ {script} ♡"),
+        ("Brilliant", f"💎 {bold} 💎"),
+        ("Strelka", f"»»— {bold} —««"),
+        ("Qalqon", f"🛡 {bold} 🛡"),
+        ("Premium", f"✧･ﾟ: *✧･ﾟ:* {script} *:･ﾟ✧*:･ﾟ✧"),
+        ("Zamonaviy", f"•°•{bold}•°•"),
+        ("Oddiy chiziqlar", f"▁▂▃ {bold} ▃▂▁"),
+    ]
+
+
+def build_nicks(name):
+    name = name.strip()[:25]
+    fonts = nick_fonts(name)
+    bold = fonts[0][1]
+    script = fonts[3][1]
+    allnicks = fonts + nick_decorated(name, bold, script)
+    return {str(i + 1): (title, nick) for i, (title, nick) in enumerate(allnicks)}
+
+
 @dp.message(F.text == "Nik yaratish 🤩")
 async def nick_gen_menu(message: types.Message, state: FSMContext):
     await state.set_state(NickGenState.waiting_for_name)
     await message.answer(
-        "🤩 Chiroyli niklar uchun ismingizni yoki so'zni kiriting:",
+        "🤩 <b>Nik yaratish</b>\n\n"
+        "Ismingizni yoki xohlagan so'zni yozing (lotin harflarida yaxshiroq chiqadi) — "
+        "men sizga <b>30 dan ortiq</b> chiroyli nik tayyorlab beraman: har xil shriftlar, ramkalar va belgilar bilan ✨",
         reply_markup=cancel_keyboard,
+        parse_mode="HTML",
     )
 
 
@@ -2578,53 +2924,20 @@ async def process_nick_generation(message: types.Message, state: FSMContext):
         await state.clear()
         await message.answer("❌ Amal bekor qilindi.", reply_markup=main_menu)
         return
-        
-    name = message.text.strip()
-    
-    def style_text(txt, mode):
-        if mode == "bold":
-            trans = str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝑗𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝑟𝑠𝐭𝑢𝑣𝑤𝐱𝑦𝐳𝐀𝐁𝐶𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗")
-            return txt.translate(trans)
-        elif mode == "sans":
-            trans = str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "𝖺𝖻𝖼𝖽𝖾𝖿𝗀𝗁𝗂𝗃𝗄𝗅𝗆𝗇𝗈𝗉𝗊𝗋𝗌𝗍𝗎𝗏𝗐𝗑𝗒𝗓𝖠𝖡𝖢𝖣𝖤𝖥𝖦𝖧𝖨𝖩𝖪𝖫𝖬𝖭𝖮𝖯𝖰𝖱𝖲𝖳𝖴𝖵𝖶𝖷𝖸𝖹𝟎𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡")
-            return txt.translate(trans)
-        elif mode == "italic":
-            trans = str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", "𝑎𝑏𝑐𝑑𝑒𝑓𝑔ℎ𝑖𝑗𝑘𝑙𝑚𝑛𝑜𝑝𝑞𝑟𝑠𝑡𝑢𝑣𝑤𝑥𝑦𝑧𝐴𝐵𝐶𝐷𝐸𝐹𝐺𝐻𝐼𝐽𝐾𝐿𝑀𝑁𝑂𝑃𝑄𝑅𝑆𝑇𝑈𝑉𝑊𝑋𝑌𝑍")
-            return txt.translate(trans)
-        elif mode == "circle":
-            trans = str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", "ⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩⒶⒷⒸⒹⒺⒻGⒽⒾⒿⓀⓁⓂⓃ𝓄ⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏ")
-            return txt.translate(trans)
-        return txt
+    if not message.text or not message.text.strip():
+        await message.answer("✍️ Iltimos, matn yuboring.", reply_markup=cancel_keyboard)
+        return
 
-    n1 = style_text(name, 'bold')
-    n2 = style_text(name, 'sans')
-    n3 = style_text(name, 'italic')
-    n4 = style_text(name, 'circle')
-    n5 = f"꧁ {name} ꧂"
-    n6 = f"♛ {name} ♛"
-    n7 = f"⚡️ {name} ⚡️"
-
-    await state.update_data(nicks={
-        "1": n1,
-        "2": n2,
-        "3": n3,
-        "4": n4,
-        "5": n5,
-        "6": n6,
-        "7": n7
-    })
+    nicks = build_nicks(message.text)
+    await state.update_data(nicks=nicks)
     await state.set_state(NickGenState.waiting_for_choice)
 
+    lines = [f"{k}. {nick}" for k, (title, nick) in nicks.items()]
     res = (
-        f"✨ Siz kiritgan so'z uchun chiroyli niklar:\n\n"
-        f"1. {n1}\n"
-        f"2. {n2}\n"
-        f"3. {n3}\n"
-        f"4. {n4}\n"
-        f"5. {n5}\n"
-        f"6. {n6}\n"
-        f"7. {n7}\n\n"
-        f"<i>💡 Kerakli nik raqamini (1 dan 7 gacha) yuboring, men uni sizga yuboraman!</i>"
+        "✨ <b>Siz uchun chiroyli niklar:</b>\n\n"
+        + "\n".join(esc(l) for l in lines)
+        + f"\n\n<i>💡 Kerakli nik raqamini (1 dan {len(nicks)} gacha) yuboring — men uni nusxalash uchun qulay ko'rinishda beraman. "
+        "Yangi so'z bilan qayta yaratish uchun «⬅️ Bekor qilish» ni bosib, Nik yaratishni qaytadan tanlang.</i>"
     )
     await message.answer(res, reply_markup=cancel_keyboard, parse_mode="HTML")
 
@@ -2636,16 +2949,20 @@ async def process_nick_choice(message: types.Message, state: FSMContext):
         await message.answer("❌ Amal bekor qilindi.", reply_markup=main_menu)
         return
 
-    choice = message.text.strip()
+    choice = (message.text or "").strip()
     data = await state.get_data()
     nicks = data.get("nicks", {})
 
     if choice in nicks:
-        selected_nick = nicks[choice]
-        await message.answer(f"Siz tanlagan nik:\n\n<code>{selected_nick}</code>", reply_markup=main_menu, parse_mode="HTML")
-        await state.clear()
+        title, selected_nick = nicks[choice]
+        await message.answer(
+            f"✅ Siz tanlagan nik (<b>{esc(title)}</b>):\n\n<code>{esc(selected_nick)}</code>\n\n"
+            "👆 Ustiga bossangiz nusxalanadi. Boshqasini tanlash uchun yana raqam yuboring.",
+            reply_markup=cancel_keyboard,
+            parse_mode="HTML",
+        )
     else:
-        await message.answer("❌ Iltimos, 1 dan 7 gacha bo'lgan raqamlardan birini yuboring yoki Bekor qilishni bosing:", reply_markup=cancel_keyboard)
+        await message.answer(f"❌ Iltimos, 1 dan {len(nicks)} gacha bo'lgan raqamlardan birini yuboring yoki Bekor qilishni bosing:", reply_markup=cancel_keyboard)
 
 
 PLAN_PRICES = {"Free": 0, "Standard": 4000, "Plus": 7000, "Premium": 13000}
@@ -2664,7 +2981,8 @@ def tariffs_view(prefix="buy_plan_", changing=False):
         "💰 Narxi: 4,000 so'm / oy\n"
         "✨ Imkoniyatlar:\n"
         "> Profil soat: ✅\n"
-        "> Reklamasiz: ✅\n\n"
+        "> Reklamasiz: ✅\n"
+        "> Bioga soat: ✅\n\n"
         "📌 Tarif: ✨ Plus\n"
         "💰 Narxi: 7,000 so'm / oy\n"
         "✨ Imkoniyatlar:\n"
@@ -3117,6 +3435,7 @@ async def set_bio_menu_cb(call: types.CallbackQuery):
         "yangi_yil": "Yangi yil hisoblagichi",
         "vatan_himoyachilari": "14-yanvar (Vatan himoyachilari)",
         "sakkiz_mart": "8-mart (Xalqaro xotin-qizlar)",
+        "namoz": "Namoz vaqtlari (Toshkent)",
         "qurbon_hayiti": "Qurbon hayiti & Namoz vaqti"
     }
     bio_type_text = type_names.get(b_type, "Oddiy bio soat")
@@ -3145,8 +3464,8 @@ async def set_bio_menu_cb(call: types.CallbackQuery):
     )
     
     info_note = ""
-    if u_data.get("plan") not in ["Plus", "Premium"]:
-        info_note = "\n\nℹ️ Biodagi soat funksiyasi faqat Plus ✨ va Premium ⭐️ tariflarida ishlaydi."
+    if u_data.get("plan") not in BIO_PLANS:
+        info_note = f"\n\nℹ️ Biodagi soat funksiyasi faqat {BIO_PLANS_TEXT} tariflarida ishlaydi."
 
     await call.message.edit_text(
         f"🎨 <b>Biodagi soat sozlamalari</b>\n\n📊 Holat: <i>{status_text}</i>\n🎨 Bio tipi: <i>{bio_type_text}</i>{info_note}",
@@ -3158,11 +3477,12 @@ async def set_bio_menu_cb(call: types.CallbackQuery):
 @dp.callback_query(F.data == "toggle_bio_on")
 async def toggle_bio_on_cb(call: types.CallbackQuery):
     u_data = get_user_data(call.from_user.id)
-    if u_data.get("plan") not in ["Plus", "Premium"]:
-        await call.answer("❌ Biodagi soat funksiyasi Plus ✨ va Premium ⭐️ tariflarida mavjud!", show_alert=True)
+    if u_data.get("plan") not in BIO_PLANS:
+        await call.answer(f"❌ Biodagi soat funksiyasi {BIO_PLANS_TEXT} tariflarida mavjud!", show_alert=True)
         return
     u_data["bio_clock"] = True
     save_db(db)
+    asyncio.create_task(apply_business_clock_now(call.from_user.id))
     await set_bio_menu_cb(call)
 
 
@@ -3170,15 +3490,17 @@ async def toggle_bio_on_cb(call: types.CallbackQuery):
 async def toggle_bio_off_cb(call: types.CallbackQuery):
     u_data = get_user_data(call.from_user.id)
     u_data["bio_clock"] = False
+    u_data["biz_tag_set"] = True   # bioni bir marta tozalash uchun belgi
     save_db(db)
+    asyncio.create_task(apply_business_clock_now(call.from_user.id))
     await set_bio_menu_cb(call)
 
 
 @dp.callback_query(F.data == "choose_bio_type_menu")
 async def choose_bio_type_menu_cb(call: types.CallbackQuery):
     u_data = get_user_data(call.from_user.id)
-    if u_data.get("plan") not in ["Plus", "Premium"]:
-        await call.answer("❌ Bio tiplarini o'zgartirish Plus ✨ va Premium ⭐️ tariflarida mavjud!", show_alert=True)
+    if u_data.get("plan") not in BIO_PLANS:
+        await call.answer(f"❌ Bio tiplarini o'zgartirish {BIO_PLANS_TEXT} tariflarida mavjud!", show_alert=True)
         return
 
     cur = u_data.get("bio_type", "oddiy")
@@ -3194,6 +3516,7 @@ async def choose_bio_type_menu_cb(call: types.CallbackQuery):
             [InlineKeyboardButton(text=mark("Yangi yil", "yangi_yil"), callback_data="set_btype_yangi_yil")],
             [InlineKeyboardButton(text=mark("14-yanvar", "vatan_himoyachilari"), callback_data="set_btype_vatan_himoyachilari")],
             [InlineKeyboardButton(text=mark("8-mart", "sakkiz_mart"), callback_data="set_btype_sakkiz_mart")],
+            [InlineKeyboardButton(text=mark("Namoz vaqtlari 🕌", "namoz"), callback_data="set_btype_namoz")],
             [InlineKeyboardButton(text=mark("Qurbon hayiti & Namoz", "qurbon_hayiti"), callback_data="set_btype_qurbon_hayiti")],
             [InlineKeyboardButton(text="🔙 Orqaga", callback_data="set_bio_menu")],
         ]
@@ -3204,7 +3527,8 @@ async def choose_bio_type_menu_cb(call: types.CallbackQuery):
         "🕒 Oddiy - Standart vaqt\n"
         "☀️ Salomlashish - Kun vaqti salomi\n"
         "🎂 Tug'ilgan kun - Shaxsiy sana\n"
-        "🎄 Yangi yil - Yangi yil hisoblagichi\n"
+        "🎄 Yangi yil - 1-yanvar 00:00 gacha kun, soat va daqiqa\n"
+        "🕌 Namoz vaqtlari - Toshkent bo'yicha: hozirgi namoz qachon kirdi/chiqadi va qancha vaqt qolgani\n"
         "🎖 14-yanvar - Vatan himoyachilari kuni va qolgan vaqt/hafta kuni\n"
         "🌷 8-mart - Xalqaro xotin-qizlar kuni va qolgan vaqt/hafta kuni\n"
         "🕌 Qurbon hayiti - Hayit kuni, hafta kuni, qolgan soat/kun va hayit namoz vaqti"
@@ -3216,12 +3540,13 @@ async def choose_bio_type_menu_cb(call: types.CallbackQuery):
 async def set_btype_callback(call: types.CallbackQuery, state: FSMContext):
     btype = call.data.replace("set_btype_", "")
     u_data = get_user_data(call.from_user.id)
-    if u_data.get("plan") not in ["Plus", "Premium"]:
-        await call.answer("❌ Bio tiplarini tanlash Plus ✨ va Premium ⭐️ tariflarida mavjud!", show_alert=True)
+    if u_data.get("plan") not in BIO_PLANS:
+        await call.answer(f"❌ Bio tiplarini tanlash {BIO_PLANS_TEXT} tariflarida mavjud!", show_alert=True)
         return
 
     u_data["bio_type"] = btype
     save_db(db)
+    asyncio.create_task(apply_business_clock_now(call.from_user.id))
     
     if btype == "tugilgan_kun":
         await state.set_state(ClockSetup.waiting_for_birthday)
@@ -4168,6 +4493,7 @@ async def main():
     await bootstrap_from_github()
     global _last_synced
     _last_synced = copy.deepcopy(db)
+    asyncio.create_task(prayer_refresh_loop())
     asyncio.create_task(resume_active_clocks())
     dp.message.outer_middleware(BanMiddleware())
     dp.callback_query.outer_middleware(BanMiddleware())
