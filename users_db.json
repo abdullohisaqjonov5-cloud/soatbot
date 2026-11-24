@@ -50,7 +50,7 @@
         "joined_date": "2026-09-07 14:27:03",
         "clock_active": true,
         "nick_clock": true,
-        "bio_clock": true,
+        "bio_clock": false,
         "online_mode": false,
         "referrals_count": 0,
         "bio_type": "tugilgan_kun",
@@ -60,7 +60,8 @@
         "font_style": "Bold",
         "setup_method": "phone",
         "tg_session": "1ApWapzMBu5q5Jwz-jfuFaHHAdQN-CgHLbKGrKjGA17E-3qWNwuHF8WoUKsah6dbCOZlNBi-ys2MAskj0Lsst-bi3Cgr4BfRydwG0NstagEr3mRyMMAb8EmGiP3DPK0zDlNmxZfxhuIl69JkheFp5xb5meghjNbRMBx6uzXjHIeVxolGOP0iOZkkvDFmSI5K-5-gu-_Q8f98SgAMKZGD9-B0BuP5UFPRAfMCQxgO9RWyqNq5HShTrDkqyf7Nu9Q1gSYtEbblqywBp4wc3XqK_HVo1C2JNHzGtKls1NRjFFA-3G1YHeB5tPHgcPnksqXVLnCLb9QcMBRlzqCbR5gLC0dXvokPp-nM=",
-        "biz_active": false
+        "biz_active": false,
+        "biz_tag_set": true
     },
     "8488328091": {
         "balance": 97000,
