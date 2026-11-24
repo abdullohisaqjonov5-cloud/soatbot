@@ -57,7 +57,8 @@
         "birthday_date": "12-24",
         "plan_expire": "2026-11-19 16:52:56",
         "clock_bonus_given": true,
-        "font_style": "Bold"
+        "font_style": "Bold",
+        "setup_method": "phone"
     },
     "8488328091": {
         "balance": 97000,
