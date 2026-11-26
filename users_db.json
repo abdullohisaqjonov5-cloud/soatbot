@@ -19,8 +19,8 @@
         "saved_pubg_id": null
     },
     "61297819": {
-        "balance": 1010010101,
-        "plan": "Free",
+        "balance": 1009997101,
+        "plan": "Premium",
         "joined_date": "2026-09-07 14:27:03",
         "clock_active": false,
         "nick_clock": true,
@@ -29,7 +29,7 @@
         "referrals_count": 0,
         "bio_type": "qurbon_hayiti",
         "birthday_date": "03-12",
-        "plan_expire": "Mavjud emas",
+        "plan_expire": "2026-12-26 20:30:55",
         "clock_bonus_given": true,
         "font_style": "Monospace",
         "biz_first_name": "Yorqinjon",
@@ -42,7 +42,8 @@
         "biz_active": true,
         "setup_method": "business",
         "biz_tag_set": true,
-        "antidelete_active": true
+        "antidelete_active": true,
+        "plan_start": "2026-11-26 20:30:55"
     },
     "5987150969": {
         "balance": 0,
