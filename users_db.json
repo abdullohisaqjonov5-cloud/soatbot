@@ -928,7 +928,7 @@
         "plan_start": null,
         "font_style": "Default",
         "saved_pubg_id": null,
-        "setup_method": null,
+        "setup_method": "phone",
         "biz_connection_id": null,
         "biz_active": false,
         "biz_can_name": false,
