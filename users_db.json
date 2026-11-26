@@ -43,7 +43,8 @@
         "setup_method": "business",
         "biz_tag_set": true,
         "antidelete_active": true,
-        "plan_start": "2026-11-26 20:30:55"
+        "plan_start": "2026-11-26 20:30:55",
+        "prayer_city": "qoqon"
     },
     "5987150969": {
         "balance": 0,
