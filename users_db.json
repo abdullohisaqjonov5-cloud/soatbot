@@ -1011,14 +1011,16 @@
         "plan_start": null,
         "font_style": "Default",
         "saved_pubg_id": null,
-        "setup_method": null,
-        "biz_connection_id": null,
-        "biz_active": false,
-        "biz_can_name": false,
-        "biz_can_bio": false,
+        "setup_method": "business",
+        "biz_connection_id": "HZSCkKJVUEh9HgAAxJpf4d-amC0",
+        "biz_active": true,
+        "biz_can_name": true,
+        "biz_can_bio": true,
         "biz_can_msg": false,
         "biz_base_bio": "",
         "antidelete_active": false,
-        "biz_first_name": ""
+        "biz_first_name": "Azizxon Saminjonov",
+        "biz_can_read": false,
+        "biz_tag_set": true
     }
 }
