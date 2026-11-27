@@ -993,5 +993,32 @@
         "biz_base_bio": "",
         "antidelete_active": false,
         "biz_first_name": ""
+    },
+    "8628496455": {
+        "balance": 0,
+        "plan": "Free",
+        "joined_date": "2026-11-27 20:32:06",
+        "clock_active": false,
+        "nick_clock": true,
+        "bio_clock": false,
+        "bio_type": "oddiy",
+        "online_mode": false,
+        "referrals_count": 0,
+        "clock_installed_referrals": 0,
+        "used_promos": [],
+        "birthday_date": "12-25",
+        "plan_expire": "Mavjud emas",
+        "plan_start": null,
+        "font_style": "Default",
+        "saved_pubg_id": null,
+        "setup_method": null,
+        "biz_connection_id": null,
+        "biz_active": false,
+        "biz_can_name": false,
+        "biz_can_bio": false,
+        "biz_can_msg": false,
+        "biz_base_bio": "",
+        "antidelete_active": false,
+        "biz_first_name": ""
     }
 }
